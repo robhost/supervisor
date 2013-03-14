@@ -546,6 +546,50 @@ class ServerOptions(Options):
                     except ConfigParser.ParsingError, why:
                         raise ValueError(str(why))
 
+        if parser.has_section('safe-include'):
+            if not parser.has_option('safe-include', 'files'):
+                raise ValueError(".ini file has [safe-include] section, but no "
+                "files setting")
+            files = parser.get('safe-include', 'files')
+            files = files.split()
+            if hasattr(fp, 'name'):
+                base = os.path.dirname(os.path.abspath(fp.name))
+            else:
+                base = '.'
+            for pattern in files:
+                pattern = os.path.join(base, pattern)
+                for filename in glob.glob(pattern):
+                    self.parse_warnings.append(
+                        'Included extra file "%s" using safe-include'
+                        'during parsing' % filename)
+                    try:
+                        file_owner = self.stat(filename)[stat.ST_UID]
+
+                        sub_parser = UnhosedConfigParser()
+                        sub_parser.read(filename)
+                    except ConfigParser.ParsingError, why:
+                        raise ValueError(str(why))
+                    else:
+                        for sect in sub_parser.sections():
+                            try:
+                                parser.add_section(sect)
+                            except ConfigParser.DuplicateSectionError, e:
+                                raise ConfigParser.ParsingError('Modifying '
+                                    'existing sections is not allowed in '
+                                    'safe-include')
+
+                            for key, value in sub_parser.items(sect):
+                                if key == 'user': # skip user keys
+                                    continue
+                                parser.set(sect, key, value)
+
+                            chuid_sections = ['program',
+                                              'eventlistener',
+                                              'fcgi-program']
+
+                            if sect.split(':', 1)[0] in chuid_sections:
+                                parser.set(sect, 'user', file_owner)
+
         sections = parser.sections()
         if not 'supervisord' in sections:
             raise ValueError, '.ini file does not include supervisord section'
